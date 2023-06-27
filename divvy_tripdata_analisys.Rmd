@@ -1,0 +1,248 @@
+---
+title: "Cyclistic bike-share analysis case study"
+author: "Gerson Ramos"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+  This is an Cyclistic bike-share analysis case study! This data is from an fictional company, Cyclistic, based on the city of Chicago, IL, USA.
+
+
+#### About the Company:
+  
+  * Cyclistic: A bike-share program that features more than 5,800 bicycles and 600 docking stations. Cyclistic sets itself apart by also offering reclining bikes, hand tricycles, and cargo bikes, making bike-share more inclusive to people with disabilities and riders who can’t use a standard two-wheeled bike. The majority of riders opt for traditional bikes; about 8% of riders use the assistive options. Cyclistic users are more likely to ride for leisure, but about 30% use them to commute to work each day.
+  
+ 
+
+```{r importing libraries, echo=TRUE, message=FALSE}
+# importing the necessary libraries
+library(tidyverse)
+library(skimr)
+library(rmarkdown)
+library(janitor)
+library(maps)
+library(highcharter)
+library(xts)
+library(scales)
+dplyr::na_if
+library(formattable)
+```
+
+## Scenario
+
+  The company believes that future success depends on maximizing the number of annual memberships. Therefore, I want to understand how casual riders and annual members use Cyclistic bikes differently. From these insights, I will try to design a new marketing strategy to convert casual riders into annual members. But first, It must be backed up with compelling data insights and professional data visualizations.
+  
+  With all that in mind, I need to figure out how do annual members and casual riders use Cyclistic. bikes differently. When casual riders may buy Cyclistic annual memberships? When Cyclistic Company can best influence casual riders to become members? 
+
+## Reading the necessary files
+
+  * Here I want to set my directory where are the files of every month between 05/2022 and 04/2023.
+  * Are 12 individual files, and I want to combine all of them since all have the same columns and structure.
+
+```{r reading the files, echo=TRUE, message=FALSE}
+new_directory <- gsub("//", "\\", "C:/Users/gerso/OneDrive/Curso/Coursera/Google Data Analytics/8 - Capstone Project/Case_Study_01/CSV_Files/Last_12_months")
+
+directory <- setwd(new_directory)
+
+files <- list.files(pattern="*.csv")
+
+divvy_tripdata <- do.call(rbind, lapply(files, read.csv))
+
+```
+
+
+## Analizing the data
+   
+  Now I want to check the data, to visualize null values and some others problems may appear
+  
+```{r}
+skim(divvy_tripdata)
+```
+
+## Cleaning and Prepare the data:
+
+  There are more than 830k empty data on the "start_station_id" and "start_station_name", and 889k empty data on the "end_station_id" and "end_station_name" columns. I will delete these null values from the data to be more consistent.
+  
+  The columns "started_at" and "ended_at" are listed like characters, I will change them to date-time to better work with it.
+  
+  I will include some columns to the data to further analysis:
+    * ride_length
+    * weekday
+    * started_hour
+    * month
+    * year
+    * date without the hours
+    * Season of the year
+    
+  After all I will read the data again to view the adding and changes
+
+```{r cleanning the missed values}
+divvy_tripdata_clean <- divvy_tripdata %>%
+  filter(start_station_id != "") %>%
+  filter(end_station_id != "")
+
+```
+
+
+```{r change the format of the columns}
+divvy_tripdata_clean$started_at <- as.POSIXct(divvy_tripdata_clean$started_at)
+divvy_tripdata_clean$ended_at <- as.POSIXct(divvy_tripdata_clean$ended_at)
+```
+
+```{r adding new cloumns}
+divvy_tripdata_clean$ride_length <- divvy_tripdata_clean$ended_at - divvy_tripdata_clean$started_at
+divvy_tripdata_clean$weekday <- wday(divvy_tripdata_clean$started_at, label = TRUE)
+divvy_tripdata_clean$started_hour <- as.numeric(format(as.POSIXct(divvy_tripdata_clean$started_at), format= "%H"))
+divvy_tripdata_clean$month <- format(as.Date(divvy_tripdata_clean$started_at), "%B")
+divvy_tripdata_clean$year <- format(divvy_tripdata_clean$started_at, "%Y")
+divvy_tripdata_clean$date <- as.Date(divvy_tripdata_clean$started_at, format = "%m/%d/%Y")
+```
+
+```{r create the stations of the period}
+divvy_tripdata_clean <- divvy_tripdata_clean %>% 
+  mutate(season = case_when(
+    date >= "2022-05-01" & date <= "2022-06-21" ~ "Spring",
+    date >= "2022-06-22" & date <= "2022-09-22" ~ "Summer",
+    date >= "2022-09-23" & date <= "2022-12-21" ~ "Fall",
+    date >= "2022-12-22" & date <= "2023-03-19" ~ "Winter",
+    date >= "2023-03-20" ~ "Spring",
+    TRUE ~ NA_character_
+  ))
+```
+
+
+```{r read the data after adding columns}
+skim(divvy_tripdata_clean)
+```
+
+
+There are results on the "ride_length" column with a negative number on it, let's filter to analyze
+
+```{r analize negative values on ride_length}
+count(divvy_tripdata_clean[which(divvy_tripdata_clean$ride_length <= 60),])
+
+divvy_1 <- divvy_tripdata_clean %>% filter(divvy_tripdata_clean$ride_length <= 60)
+divvy_1
+```
+
+These low values of right length appear to be false positive pickups, let's eliminate all values of rides_length with < 60s them.
+
+```{r deleting the negative values on ride_length}
+divvy_tripdata_clean <- filter(divvy_tripdata_clean, ride_length >= 60)
+divvy_tripdata_clean <- arrange(divvy_tripdata_clean, started_at)
+```
+
+
+## Analizing the data
+
+  First of all, let's see the total rides per month.
+  
+```{r rides per month, echo=TRUE, warning=FALSE}
+mtotal <- divvy_tripdata_clean %>% group_by(month = month(started_at)) %>% 
+  summarise(total = n()) %>% arrange(month)
+mtotal$total <- accounting(mtotal$total, digits = 0, big.mark = ".")
+show(mtotal)
+
+mt <- ggplot(mtotal, aes(x = month, y = total)) +
+  geom_bar(stat = "identity", fill="lightblue") +
+  theme_classic(base_size = 10) +
+  scale_x_continuous(name = "Month", breaks = seq(1,12)) +
+  geom_text(aes(label = total), size = 3, alpha=0.9, vjust= -0.5, hjust=0.5) +
+  labs(title = "Total rides per month", x = "", y = "") 
+mt + scale_y_continuous(labels = scales::number_format(accuracy = 1, 
+                                                       big.mark = "."))
+```
+
+Well, this graph shows maybe the temperature has correlation with the number of the rides, because the most rides occurs in summer, otherwise the minimum rides per months occurs in winter, we don't had the temperature of the day in this dataset, but we can plot a graph with rides per season to capture this tendency:
+
+```{r analisyng season, echo=TRUE, warning=FALSE}
+seas <- divvy_tripdata_clean %>% group_by(season, member_casual) %>% 
+  summarise(total = n()) %>% mutate(dif = prop.table(total)) %>% arrange(season)
+seas
+
+
+seas$total <- accounting(seas$total, digits = 0, big.mark = ".")
+seas$dif <- percent(seas$dif, digits = 2)
+show(seas)
+
+ss <- ggplot(seas, aes(x=season, y=total, fill=member_casual))+
+  geom_col() + 
+  labs(x="Season", y="Number of Rides", fill = "Type of User")+
+  scale_fill_manual(values = c("darkred", "steelblue")) + 
+  theme_classic()
+ss + scale_y_continuous(labels = scales::number_format(accuracy = 1, 
+                                                       big.mark = "."))
+
+```
+
+The number of rides has an obvious correlation with the temperature, when the degree is higher, more rides are taken when the degree falls down, and the number of rides also falls.
+
+Let's analyze the number of rides per day of the week and hours of the day with more bicycle pick-ups to take more precise information to know how better we can approach the casual members to become members. 
+
+divvy_tripdata_clean %>% group_by(member_casual) %>% 
+  summarise(total = n(), ride_mean = mean(ride_length))
+```{r rides per weekday, echo=TRUE, warning=FALSE}
+week <- divvy_tripdata_clean %>% group_by(weekday, member_casual) %>% 
+  summarise(total = n(), ride_mean = mean(ride_length))
+week
+
+wk <- ggplot(week, aes(x=weekday, y=total, fill=member_casual)) +
+  geom_col(position = "dodge") +
+  labs(title = "Total numer of rides per day of the week", x='Weekday', y="Total Rides", fill="Type of user") +
+  theme_classic()+
+  scale_fill_manual(values = c("darkred", "steelblue")) 
+wk + scale_y_continuous(labels = scales::number_format(accuracy = 1, 
+                                                       big.mark = "."))
+
+hr <- divvy_tripdata_clean %>% group_by(member_casual, started_hour) %>% 
+  summarise(total = n()) %>% 
+  ggplot(aes(x=started_hour, y=total, group = member_casual, color=member_casual)) +
+  labs(title = "Rides started per hour of the day", x="Hours", y="Number of started rides", color="Type of users") +
+  geom_line() + geom_point() + theme_classic()+
+  scale_fill_manual(values = c("darkred", "steelblue"))
+hr + scale_y_continuous(labels = scales::number_format(accuracy = 1, 
+                                                       big.mark = "."))
+```
+
+It's clear that the "casual rides" utilize more bicycles at the end of the Week and annual member in the day-to-day to go to work or other compromises.
+
+I will plot a time series to understand the trend of how members and casual users are using the bikes of Cyclistic during the last 12 months.
+
+### Time Series
+
+```{r plotting a time series}
+members_rides <- divvy_tripdata_clean %>% group_by(date) %>% 
+  filter(member_casual == "member") %>%
+  summarise(total = n())
+
+tsmembers <- xts(members_rides$total, order.by = as.POSIXct(members_rides$date))
+
+casual_rides <- divvy_tripdata_clean %>% group_by(date) %>% 
+  filter(member_casual == "casual") %>% 
+  summarise(total = n())
+
+tscasual <- xts(casual_rides$total, order.by = as.POSIXct(casual_rides$date))
+
+ts <- hchart(tsmembers, name = "Members") %>% 
+  hc_add_series(tscasual, name = "Casual") %>%
+  hc_add_theme(hc_theme_darkunica()) %>% 
+  hc_credits(enable = TRUE, text = "Source: Lyft Bikes and Scooters, LLC ('Bikeshare')",
+             style = list(fontSize = "12px")) %>% 
+  hc_title(text = "Time Series Plot of Rides by Members x Casual users") %>% 
+  hc_legend(enabled = TRUE)
+ts
+
+```
+
+
+## Conclusion:
+
+This analysis brought some insights, like the best season to make a push in social media ads is on Weekends, on the Spring and Summer, or on afternoon on weekdays.
+
+Thanks.
